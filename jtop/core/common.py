@@ -1,34 +1,25 @@
 # -*- coding: UTF-8 -*-
-# Copyright (C) 2019, Raffaello Bonghi <raffaello@rnext.it>
-# All rights reserved
+# This file is part of the jetson_stats package (https://github.com/rbonghi/jetson_stats or http://rnext.it).
+# Copyright (c) 2019 Raffaello Bonghi.
 #
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions
-# are met:
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
 #
-# 1. Redistributions of source code must retain the above copyright
-#    notice, this list of conditions and the following disclaimer.
-# 2. Redistributions in binary form must reproduce the above copyright
-#    notice, this list of conditions and the following disclaimer in the
-#    documentation and/or other materials provided with the distribution.
-# 3. Neither the name of the copyright holder nor the names of its
-#    contributors may be used to endorse or promote products derived
-#    from this software without specific prior written permission.
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
 #
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
-# CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING,
-# BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
-# FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-# HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
-# PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
-# OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
-# WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
-# OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
-# EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+# You should have received a copy of the GNU Affero General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-import abc
+import re
 import os
+from random import choice
+from string import ascii_letters
+from base64 import b64encode
 # Launch command
 import subprocess as sp
 # Logging
@@ -38,25 +29,67 @@ import socket
 import fcntl
 import struct
 import array
-
-# Create logger for jplotlib
+from .exceptions import JtopException
+# Load Author
+AUTH_RE = re.compile(r""".*__author__ = ["'](.*?)['"]""", re.S)
+# Create logger
 logger = logging.getLogger(__name__)
-# Initialization abstract class
-# In according with: https://gist.github.com/alanjcastonguay/25e4db0edd3534ab732d6ff615ca9fc1
-ABC = abc.ABCMeta('ABC', (object,), {})
 
 
-class StatusObserver(ABC):
+class Board:
 
-    @abc.abstractmethod
-    def update(self, stats):
-        pass
+    def __init__(self):
+        self.info = {}
+        self.hardware = {}
+        self.libraries = {}
+        self._board = {'info': self.info, 'hardware': self.hardware, 'libraries': self.libraries}
+
+    def _update_libraries(self, libraries):
+        self.libraries = libraries
+        self._board = {'info': self.info, 'hardware': self.hardware, 'libraries': self.libraries}
+
+    def _update_init(self, init):
+        self.info = init['info']
+        self.hardware = init['hardware']
+        self._board = {'info': self.info, 'hardware': self.hardware, 'libraries': self.libraries}
+
+    def items(self):
+        return self._board.items()
+
+    def get(self, name, value=None):
+        if name in self._board:
+            return self._board[name]
+        else:
+            return value
+
+    def __getitem__(self, name):
+        return self._board[name]
+
+    def __iter__(self):
+        return iter(self._board)
+
+    def __next__(self):
+        return next(self._board)
+
+    def __len__(self):
+        return len(self._board)
+
+    def __repr__(self):
+        return str(self._board)
 
 
-def import_os_variables(SOURCE, PATTERN="JETSON_"):
+def locate_commands(name, commands):
+    for cmd in commands:
+        if os.path.exists(cmd):
+            logger.info("{name} loaded on {cmd}".format(name=name, cmd=cmd))
+            return cmd
+    raise JtopException("{name} is not availabe on this board".format(name=name))
+
+
+def import_os_variables(SOURCE, PATTERN):
     if os.path.isfile(SOURCE):
-        logger.info("Open source file {}".format(SOURCE))
-        proc = sp.Popen(['bash', '-c', 'source {} && env'.format(SOURCE)], stdout=sp.PIPE)
+        logger.debug("Open source file {source}".format(source=SOURCE))
+        proc = sp.Popen(['bash', '-c', 'source {source} && env'.format(source=SOURCE)], stdout=sp.PIPE, stderr=sp.PIPE)
         # Load variables
         source_env = {}
         for tup in map(lambda s: s.decode("utf-8").strip().split('=', 1), proc.stdout):
@@ -68,6 +101,20 @@ def import_os_variables(SOURCE, PATTERN="JETSON_"):
     else:
         logger.error("File does not exist")
         return {}
+
+
+def get_var(MATCH_RE):
+    """
+    Show the version of this package
+
+    :return: Version number
+    :rtype: string
+    """
+    # Load version package
+    with open(os.path.join(os.path.abspath(os.path.dirname(__file__)), '../', "__init__.py")) as fp:
+        match = MATCH_RE.match(fp.read())
+        value = match.group(1) if match else ''.join(choice(ascii_letters) for i in range(16))
+    return value
 
 
 def get_uptime():
@@ -149,4 +196,8 @@ def get_local_interfaces():
     if 'lo' in ip_dict:
         del ip_dict['lo']
     return {"hostname": hostname, "interfaces": ip_dict}
+
+
+def get_key():
+    return str(b64encode(get_var(AUTH_RE).encode("utf-8")))
 # EOF
